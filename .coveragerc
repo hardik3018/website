@@ -1,8 +1,0 @@
-[run]
-source = .
-omit =
-    */migrations/*
-    node_modules/*
-    htmlcov/*
-plugins =
-    django_coverage_plugin

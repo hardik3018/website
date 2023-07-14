@@ -4,7 +4,7 @@ This repository is for the code that comprises the [Outreachy website](https://w
 
 Outreachy provides remote internships. Outreachy supports diversity in open source and free software!
 
-Outreachy internships are 3 months long. Interns are paid an internship stipend of $7,000 USD.
+Outreachy internships are 3 months long. Interns are paid an internship stipend of $6,000 USD.
 
 Interns work with experienced mentors from open source communities. Outreachy internship projects may include programming, user experience, documentation, illustration, graphical design,  data science, project marketing, user advocacy, or community event planning.
 
@@ -1217,191 +1217,7 @@ Sometimes a field doesn't work out exactly the way you wanted it to, and you wan
 
 6. The third migration will fail if someone has added a new model object between the second migration and the third migration. In this case, you should roll back to the first migration (where you first added the field). You can pass the migration number to go back to: `./manage.py migrate home PREFIX` This should be a unique prefix (like the first four numbers of the migration). Then you can try to run the migration again: `./manage.py migrate`. Repeat as necessary.
 
-## Deleting old migrations
-
-Each time the Django models change, Django creates a [migration file](https://docs.djangoproject.com/en/4.1/topics/migrations/). Everytime you need to run tests, Django creates a new test database, and applies all migrations. That means that if you have many migrations, starting a test can take a long time, because all the migrations need to be applied.
-
-A way to work around this is to either:
- 1. Squash migrations periodically
- 2. Delete all migration files and recreate one new migration file
-
-Squashing migrations only works if you don't have a RunPython command in any migration file. We often use that command to deal with tricky migrations, such as moving old data from one field to a new field.
-
-If you can, please use squash migrations. Otherwise, read on for the second option.
-
-Delete all migration files and recreate one new migration file by:
-
-Check out a new branch:
-
-```git checkout -b delete-old-migrations```
-
-Delete the migration files from both git's history and the migration directory for the home app:
-
-```git rm home/migrations/0*```
-
-(I wasn't sure whether to leave the empty __init__.py file, so I deleted all migration files that started with 0. If you have over 1,000 migration files, you'll need to also delete files starting with 1.)
-
-Then run the command to make one new migration file, based on the current home/models.py file:
-
-```./manage.py makemigrations```
-
-Copy the production database twice -- once as a backup, in case production migration fails, and the second time as a test database update:
-
-```
-ssh dokku@outreachy.org postgres:clone www-database test-database-updated-2022-12-26
-ssh dokku@outreachy.org postgres:clone www-database www-database-backup-2022-12-26
-```
-
-Link the copied production database into the test server:
-
-```
-ssh dokku@outreachy.org postgres:link test-database-updated-2022-12-26 test
-```
-
-Unlink the old test database from the test server:
-
-```
-ssh dokku@outreachy.org postgres:unlink test-database-updated-2022-11-21 test
-```
-
-Edit the app.json file in the top-level directory of the code repo. You will change the line that auto-migrates on a git push to instead migrate with the --fake-initial flag.
-
-Make sure to commit the app.json file in the same commit that removes the old migration files and adds the new clean migration file.
-
-```
-git add app.json
-```
-
-TLDR; the --fake-initial flag lets us create one new migration file to represent all our migrations, and not touch the production or test database tables.
-
-Details: This special flag is needed because there is a mismatch in expectations between what the newly created migration file expects and the actual state of the production or test database.
-
-The newly created migration code assumes that the database it starts with is fresh and empty, with no database tables. It wants to write thos new database tables to the empty database.
-
-However, our production and test servers already have those database tables in them. Moreover, it already contains a lot of data! We don't want to delete that data, or those database tables. The tricky part is that internally, Django keeps track of which migrations are applied to the database. So we have to do something special to update Django's migration tracking database.
-
-The --fake-initial flag will tell Django, "Hey, the database schema already matches this migration I'm asking you to apply, so pretend you applied it and don't actually run the code to migrate." The flag will ask Django to delete the table in its migration tracking database, and then mark the new, one-file migration as applied without actually running the migration code.
-
-The final result is that Django will assume our new one-file migration has been applied. In the future, when we modify the models, Django will apply that new migration on top of the one-file migration.
-
-Push the new code to the test server, which will apply the app.json file, and should fake migrate the database.
-
-```
-git push dokku-test delete-old-migrations:master
-```
-
-Pushing to the dokku test webserver git repo will result in the Outreachy test being rebuilt. During the rebuild process, you will see a line saying that the --fake-initial flag is being used:
-
-```
------> Releasing test...
------> Checking for predeploy task
------> Executing predeploy task from app.json: python manage.py migrate --fake-initial
-=====> Start of test predeploy task (ed8c12901) output
-       Operations to perform:
-         Apply all migrations: admin, auth, contenttypes, home, reversion, sessions, taggit, wagtailadmin, wagtailcore, wagtaildocs, wagtailembeds, wagtailforms, wagtailimages, wagtailredirects, wagtailsearch, wagtailusers
-       Running migrations:
-         No migrations to apply.
-=====> End of test predeploy task (ed8c12901) output
-```
-
-Double check things are working on the test server. Go to your account page, and change your avatar. After saving, re-open the account page and make sure the new picture is displayed. Edit a model through the Django web interface and make sure the changes show up on pages that display its fields. Etc.
-
-Update the app.json file to use the --noinput flag instead of the --fake-initial flag. Then add the file to git and commit it:
-
-```
-git add app.json
-git commit -m "Revert app.json file to migrate automatically on git push to the webserver repo"
-```
-
-Push the changed app.json file to the test server:
-
-```
-git push dokku-test delete-old-migrations:master
-```
-
-Pushing to the dokku test webserver git repo will result in the Outreachy test being rebuilt. During the rebuild process, you will see a line saying that the --noinput flag is being used:
-
-```
------> Releasing test...
------> Checking for predeploy task
------> Executing predeploy task from app.json: python manage.py migrate --noinput
-=====> Start of test predeploy task (ecfd4fbd7) output
-       Operations to perform:
-         Apply all migrations: admin, auth, contenttypes, home, reversion, sessions, taggit, wagtailadmin, wagtailcore, wagtaildocs, wagtailembeds, wagtailforms, wagtailimages, wagtailredirects, wagtailsearch, wagtailusers
-       Running migrations:
-         No migrations to apply.
-=====> End of test predeploy task (ecfd4fbd7) output
-```
-
-Double check that the test website still works again.
-
-Next, change a model, create a new migration, and push those changes to the test webserver's git repo.
-
-You should see output similar to the following:
-
-```
------> Releasing test...
------> Checking for predeploy task
------> Executing predeploy task from app.json: python manage.py migrate --noinput
-=====> Start of test predeploy task (c10a5d3b0) output
-       Operations to perform:
-         Apply all migrations: admin, auth, contenttypes, home, reversion, sessions, taggit, wagtailadmin, wagtailcore, wagtaildocs, wagtailembeds, wagtailforms, wagtailimages, wagtailredirects, wagtailsearch, wagtailusers
-       Running migrations:
-         Applying home.0002_auto_20221226_2301... OK
-=====> End of test predeploy task (c10a5d3b0) output
-```
-
-Now that we've made sure the test webserver works, it's time to apply a similar process to the production webserver.
-
-First, we need to push the commit that deleted all the old migration files, and disabled automatic migrations.  We can find which commit we need by running:
-
-```
-git log --pretty=oneline --abbrev-commit
-```
-
-Let's say that gave us the following output:
-
-```
-4a6a57bc (HEAD -> 2022-12-delete-old-migrations, dokku-test/master) Revert "Add Outreachy longitudinal survey"
-a2264fa8 README: Document how to carefully start with a new set of migration files.
-097beb12 Revert app.json file to migrate automatically on git push to the webserver repo
-5057a2aa Replace migration files with one new migration.
-c4bac9b9 (github/master, dokku/master, master) Replace image on thank-you post, and center image
-```
-
-Find the commit hash for when we removed the old migration files. It should be the first commit on top of the dokku/master HEAD commit. In the above case, the commit is `5057a2aa`.
-
-Now, push that commit to the production server's master branch:
-
-```
-git push --no-verify dokku 5057a2aa:master
-```
-
-You should see output showing that the `--fake-initial` flag is being used.
-
-Next, push the commit to revert the app.json file to the production server's master branch:
-
-```
-git push --no-verify dokku 097beb12:master
-```
-
-You should see output showing that the `--noinput` flag is being used, and that there are no migrations to apply.
-
-Next, try pushing the commit that edited some models:
-
-```
-git push --no-verify dokku 4a6a57bc:master
-```
-
-You should see log output that shows the new migration was applied to the production database.
-
-Double check things are working on the production server. Check that any model changes are showing up in the Django admin interface.
-
-Once you are *absolutely positively sure* that the changes haven't caused any issues, you should delete the backup www database using the `postgres unlink` and `postgres destroy` dokku commands.
-
 # Updating Packages
-
-## Updating Python packages
 
 The Outreachy website is built using several different Python packages. The Django web framework is one such Python package. Python projects have different ways of automatically installing packages, but for this project, we use [pipenv](https://pipenv.readthedocs.io/en/latest/).
 
@@ -1423,7 +1239,7 @@ pipenv update <pkg>
 
 These commands will update `Pipfile` and `Pipfile.lock`. You'll need to commit both files.
 
-## Syncing updated Python packages
+## Syncing updated packages
 
 When someone else makes a commit that updates the packages listed in the pipfile, when you pull those changes, you'll need to update your installed packages. Otherwise you may (or may not!) get an error whenever you try to run a manage.py command. The error might only be triggered if you view a particular page that runs Python code that depends on those installed packages.
 
@@ -1432,16 +1248,6 @@ To sync your installed pipenv packages with any changes made in the Outreachy Gi
 ```
 pipenv sync
 ```
-
-## Updating node.js packages
-
-The Outreachy website relies on several node.js packages. You can update those packages with the node.js package manager, npm:
-
-```
-npm update
-```
-
-This commands will update `package-lock.json`. You will need to commit that file.
 
 # Updating Python versions
 
